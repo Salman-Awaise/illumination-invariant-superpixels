@@ -1,6 +1,3 @@
-# Author: Salman Awaise, Sameer Syed
-# Date: December 11, 2025
-# Course: CS 7180 - Advanced Perception
 # keeping helper functions for saving images and label maps
 import os
 import numpy as np

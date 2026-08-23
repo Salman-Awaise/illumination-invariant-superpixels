@@ -1,6 +1,3 @@
-# Author: Salman Awaise, Sameer Syed
-# Date: December 11, 2025
-# Course: CS 7180 - Advanced Perception
 # keeping metric functions for superpixel-based evaluation here
 import numpy as np
 # computing boundary recall between predicted and ground-truth edges

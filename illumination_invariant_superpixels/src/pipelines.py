@@ -1,6 +1,3 @@
-# Author: Salman Awaise, Sameer Syed
-# Date: December 11, 2025
-# Course: CS 7180 - Advanced Perception
 # keeping superpixel processing pipelines here
 from .preprocessing import apply_color_constancy
 from .superpixels import run_slic

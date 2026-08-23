@@ -1,6 +1,3 @@
-# Author: Salman Awaise, Sameer Syed
-# Date: December 11, 2025
-# Course: CS 7180 - Advanced Perception
 # keeping image loading and color constancy functions here
 import os
 import cv2

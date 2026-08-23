@@ -1,6 +1,3 @@
-# Author: Salman Awaise, Sameer Syed
-# Date: December 11, 2025
-# Course: CS 7180 - Advanced Perception
 # keeping SLIC superpixel logic and visualization here
 import numpy as np
 from skimage.segmentation import slic, mark_boundaries
