@@ -2,29 +2,33 @@
 
 **Do superpixels stay put when the lighting changes — and does color constancy help?**
 
-Superpixel algorithms like SLIC group pixels by color similarity, which makes them
-fragile under changing illumination: move the light source and the segmentation
-redraws itself, even though the underlying scene is identical. This project
-quantifies that instability and tests whether a gray-world color constancy step,
-applied before segmentation, makes superpixels more repeatable.
+SLIC and friends group pixels by color similarity, which sounds reasonable until you
+move the light. Then the segmentation quietly redraws itself, even though nothing
+about the actual scene has changed. That's a problem if you're using superpixels as
+a preprocessing step and expecting them to be stable.
 
-Short answer: **yes, consistently.** Across 4 objects × 11 illumination conditions,
+So we measured it. We took four objects photographed under ten controlled lighting
+conditions each, segmented everything, and asked how much the segmentation drifts.
+Then we added a gray-world color constancy step in front of SLIC to see whether
+normalizing the illuminant first makes things more repeatable.
+
+Short version: **it does.** Across all 4 objects and 11 illumination conditions,
 color constancy improved every stability metric on every object.
 
 <p align="center">
   <img src="results/figures/apple_illumination_grid.png" width="720"
        alt="Apple under three illumination conditions, with raw and color-constancy-corrected SLIC superpixels"><br>
-  <em>Same apple, three lighting conditions. Left: input. Middle: SLIC on raw RGB.
-  Right: SLIC after gray-world correction.</em>
+  <em>The same apple under three lighting conditions. Left: the input.
+  Middle: SLIC on raw RGB. Right: SLIC after gray-world correction.</em>
 </p>
 
 ---
 
-## Key Result
+## The headline result
 
-Each image is segmented, then compared against the segmentation of a reference
-image of the *same object* under *different* lighting. A stable method produces
-similar segmentations regardless of the light.
+Here's the setup: we segment each image, then compare it against the segmentation
+of a reference image of the *same object* under *different* lighting. If a method is
+stable, those two segmentations should look alike. If it isn't, they won't.
 
 | Metric | Raw RGB | + Gray-World CC | Change |
 |---|---|---|---|
@@ -32,18 +36,30 @@ similar segmentations regardless of the light.
 | Boundary IoU ↑ | 0.3331 | **0.3493** | **+4.84%** |
 | Variation of Information ↓ | 1.2604 | **1.1747** | **−6.80%** |
 
-Averaged over all 4 objects. ↑ = higher is better, ↓ = lower is better.
-**Color constancy won on 4/4 objects for all 3 metrics** — the direction of the
-effect is consistent, not an artifact of averaging.
+Averaged across all four objects. ↑ means higher is better, ↓ means lower is better.
+Worth stressing: **color constancy won on 4/4 objects for all 3 metrics.** The
+direction is consistent everywhere, so this isn't an artifact of averaging a couple
+of big wins against some losses.
 
-The gain is largest where it should be. Boundary IoU and VI both measure whether
-*the same boundaries* get drawn, and those improve meaningfully. Neighbor
-stability barely moves because it is dominated by the large uniform background
-regions that stay grouped either way.
+Here's what that actually looks like on a single image — same photo, same SLIC
+settings, the only difference being whether we normalize the illuminant first:
+
+<p align="center">
+  <img src="results/figures/example_before_after.png" width="880"
+       alt="Input apple image, SLIC on raw RGB, and SLIC after gray-world color constancy"><br>
+  <em>Notice the corrected version pulls the warm cast out of the apple, so SLIC
+  splits it on reflectance changes rather than on the lighting gradient.</em>
+</p>
+
+The gains also land where you'd hope. Boundary IoU and VI are the two metrics that
+actually care whether *the same boundaries* get drawn, and both move meaningfully.
+Neighbor stability barely budges — but that's expected, since it's dominated by the
+large uniform background regions that stay grouped together no matter what you do
+to the color.
 
 ---
 
-## How It Works
+## How it works
 
 ```mermaid
 flowchart LR
@@ -70,43 +86,47 @@ flowchart LR
     J --> L
 ```
 
-**Gray-world color constancy** assumes the average reflectance of a scene is
-achromatic. It computes the per-channel mean, then rescales each channel so all
-three means match the global gray value — cancelling a global color cast from the
-illuminant before SLIC ever sees the image.
+**Gray-world color constancy** rests on a simple assumption: average out a whole
+scene and you should get something roughly gray. So we take the per-channel mean and
+rescale each channel until all three means agree. In practice that cancels a global
+color cast from the illuminant, and SLIC never sees the original tint at all.
 
-**Two comparison protocols** are implemented, and they answer different questions:
+**We run two comparisons, and they're asking different questions.** This matters more
+than it might look:
 
-1. **Self-consistency** (`--stability`) picks the first image of each object as the
-   reference, segments all 11 illumination variants, and scores every variant
-   against that reference. Raw is compared to the raw reference and CC to the CC
-   reference, so each pipeline is judged against itself. *Does the pipeline agree
-   with itself when the light moves?*
+1. **Self-consistency** (`--stability`) takes the first image of each object as the
+   reference, segments all 11 illumination variants, and scores each variant against
+   that reference — raw against the raw reference, CC against the CC reference. Each
+   pipeline gets judged against itself. *Does it agree with itself when the light
+   moves?*
 
-2. **Reflectance baseline** (`--reflectance`) segments the ground-truth reflectance
-   image — the illumination-free version of the scene from MIT Intrinsic Images —
-   and scores both pipelines against that fixed external partition. *Does the
-   pipeline recover the true illumination-invariant boundaries?*
+2. **Reflectance baseline** (`--reflectance`) instead segments the ground-truth
+   reflectance image — the illumination-free version of the scene that ships with MIT
+   Intrinsic Images — and scores both pipelines against that fixed, external
+   partition. *Does the pipeline actually recover the true illumination-invariant
+   boundaries?*
+
+Those two can disagree, and on this dataset they do. More on that below.
 
 ---
 
-## Metrics
+## The metrics
 
 | Metric | What it measures | Range | Better |
 |---|---|---|---|
-| **Neighbor stability** | Fraction of adjacent pixel pairs grouped together in the reference that stay grouped in the variant | 0–1 | ↑ |
+| **Neighbor stability** | Of the adjacent pixel pairs grouped together in the reference, how many stay grouped in the variant | 0–1 | ↑ |
 | **Boundary IoU** | Intersection-over-union of the two superpixel boundary maps | 0–1 | ↑ |
 | **Variation of Information** | Information-theoretic distance between two partitions, `H(X) + H(Y) − 2·I(X;Y)` | 0–∞ bits | ↓ |
-| **Boundary Recall** | Fraction of ground-truth edges recovered by superpixel boundaries | 0–1 | ↑ |
-| **ASA** | Achievable Segmentation Accuracy — ceiling on accuracy given the superpixel partition | 0–1 | ↑ |
+| **Boundary Recall** | How many ground-truth edges the superpixel boundaries recover | 0–1 | ↑ |
+| **ASA** | Achievable Segmentation Accuracy — the accuracy ceiling this partition allows | 0–1 | ↑ |
 
-All five are implemented in `src/metrics.py`. The stability experiment reports the
-first three; Boundary Recall and ASA are available for evaluation against the
-ground-truth masks in `data/gt/`.
+All five live in `src/metrics.py`. The experiments here report the first three;
+Boundary Recall and ASA are implemented and ready if you want to evaluate against
+the ground-truth masks in `data/gt/`.
 
 ---
 
-## Installation
+## Getting started
 
 ```bash
 git clone https://github.com/Salman-Awaise/illumination-invariant-superpixels.git
@@ -114,25 +134,27 @@ cd illumination-invariant-superpixels
 pip install -r requirements.txt
 ```
 
-Requires Python 3.9+. Dependencies: NumPy, OpenCV, scikit-image, Matplotlib, pandas.
+You'll want Python 3.9 or newer. Dependencies are NumPy, OpenCV, scikit-image,
+Matplotlib and pandas — nothing exotic.
 
-## Usage
+### Running it
 
-Run the full analysis — metrics and figures:
+To run everything, metrics and figures both:
 
 ```bash
 python main.py
 ```
 
-Or run one stage at a time:
+Or pick a single stage if you only need one:
 
 ```bash
 python main.py --stability     # stability metrics      -> results/metrics/
 python main.py --reflectance   # reflectance baseline   -> results/metrics/ + figures/
 python main.py --figures       # illumination grids     -> results/figures/
+python main.py --examples      # before/after examples  -> results/figures/
 ```
 
-Use the modules directly:
+You can also just import the pieces and use them directly:
 
 ```python
 from src.preprocessing import load_image
@@ -147,18 +169,18 @@ img_cc, labels_cc = run_cc_pipeline(img, cc_method="gray_world")
 print(boundary_iou(labels_raw, labels_cc))
 ```
 
-### Configuration
+### Knobs worth turning
 
-Defaults live in `src/config.py`:
+The defaults live in `src/config.py`:
 
-| Setting | Default | Effect |
+| Setting | Default | What it does |
 |---|---|---|
-| `DEFAULT_N_SEGMENTS` | `200` | Approximate number of superpixels |
-| `DEFAULT_COMPACTNESS` | `10.0` | Higher = squarer superpixels; lower = tighter to color edges |
+| `DEFAULT_N_SEGMENTS` | `200` | Roughly how many superpixels you get |
+| `DEFAULT_COMPACTNESS` | `10.0` | Turn it up for squarer superpixels, down to hug color edges more tightly |
 
 ---
 
-## Project Structure
+## What's where
 
 ```
 .
@@ -176,24 +198,25 @@ Defaults live in `src/config.py`:
 │   ├── stability_analysis.py   experiment 1: self-consistency across lighting
 │   ├── reflectance_baseline.py experiment 2: agreement with GT reflectance
 │   ├── visualization.py        illumination grid figures
+│   ├── example_figures.py      the before/after figures used in this README
 │   └── utils.py                image and label-map I/O
 └── results/
     ├── figures/                illumination grids and comparison plots
     └── metrics/                CSV summaries
 ```
 
-## Data
+## The data
 
-Four objects — `apple`, `cup1`, `deer`, `frog1` — each captured under 10 controlled
-illumination conditions plus an original, at roughly 334×334 to 400×334 pixels.
-The object set and the `reflectance` / `shading` / `mask` ground-truth layout follow
-the **MIT Intrinsic Images** dataset (Grosse et al., ICCV 2009).
+Four objects — `apple`, `cup1`, `deer` and `frog1` — each shot under 10 controlled
+illumination conditions plus an original, somewhere in the range of 334×334 to
+400×334 pixels. The object set and the `reflectance` / `shading` / `mask` ground-truth
+layout come from the **MIT Intrinsic Images** dataset (Grosse et al., ICCV 2009).
 
-## Results
+## Results in full
 
 ### Experiment 1 — self-consistency across lighting
 
-Full per-object numbers are in `results/metrics/stability_summary_all_metrics.csv`:
+Per-object numbers, straight out of `results/metrics/stability_summary_all_metrics.csv`:
 
 | Object | Stability raw | Stability CC | bIoU raw | bIoU CC | VI raw | VI CC |
 |---|---|---|---|---|---|---|
@@ -202,10 +225,30 @@ Full per-object numbers are in `results/metrics/stability_summary_all_metrics.cs
 | cup1  | 0.9752 | 0.9755 | 0.3460 | **0.3496** | 1.1591 | **1.1467** |
 | frog1 | 0.9683 | 0.9703 | 0.3202 | **0.3360** | 1.3630 | **1.2722** |
 
+Color constancy takes every column on every object. Clean sweep.
+
+To make that concrete, here's the boundary IoU column rendered as a picture. We
+overlay the segmentation of `apple_01` on the segmentation of `apple_08` — the same
+apple under different light — and color-code where the two agree:
+
+<p align="center">
+  <img src="results/figures/example_boundary_agreement.png" width="820"
+       alt="Boundary agreement overlays for raw RGB and color-constancy-corrected SLIC"><br>
+  <em>White is where both segmentations drew the same boundary; red and blue are
+  where only one of them did. The background grid agrees either way — the
+  disagreement is concentrated on the object, which is exactly where the lighting
+  changed.</em>
+</p>
+
+We picked `apple_08` deliberately rather than for effect: of the ten variants, its
+improvement is the closest to the average, so it's a representative case rather than
+the most flattering one.
+
 ### Experiment 2 — reflectance baseline
 
-Scoring both pipelines against the segmentation of the ground-truth reflectance
-image, rather than against themselves (`results/metrics/reflectance_baseline_summary.csv`):
+Now the same two pipelines, but scored against the segmentation of the ground-truth
+reflectance image rather than against themselves
+(`results/metrics/reflectance_baseline_summary.csv`):
 
 | Object | IoU raw | IoU cc | VI raw | VI cc |
 |---|---|---|---|---|
@@ -214,49 +257,61 @@ image, rather than against themselves (`results/metrics/reflectance_baseline_sum
 | cup1  | 0.3010 | **0.3036** | 1.1840 | **1.1813** |
 | frog1 | **0.2327** | 0.2246 | 1.5873 | **1.5775** |
 
-Here the picture is mixed: color constancy wins 2/4 on boundary IoU and 3/4 on VI,
-rather than sweeping the board as it does on self-consistency.
+This one's messier. Color constancy takes 2/4 on boundary IoU and 3/4 on VI — a far
+cry from the clean sweep above.
 
-That gap is informative. Gray-world rescales every image toward the same gray
-average, which pushes all 11 illumination variants toward a common appearance —
-raising their agreement with *each other* whether or not the shared boundaries are
-the *correct* ones. The reflectance baseline is immune to that effect because the
-reference is external and fixed. Read together: **color constancy reliably makes
-SLIC more repeatable, but does not clearly move it closer to true illumination
-invariance on this dataset.**
+<p align="center">
+  <img src="results/figures/example_reflectance.png" width="880"
+       alt="SLIC on ground-truth reflectance next to raw and color-constancy-corrected segmentations"><br>
+  <em>The left panel is the target: SLIC run on the illumination-free reflectance
+  image. On this particular image raw RGB actually scores slightly higher than the
+  corrected version — which is the mixed result in the table above, made visible.</em>
+</p>
 
-## Limitations
+We think that gap is the interesting part, and there's a plausible mechanism behind
+it. Gray-world pulls every image toward the same gray average, which nudges all 11
+illumination variants toward a common appearance. That raises their agreement with
+*each other* regardless of whether the boundaries they now share are the *right*
+ones. The reflectance baseline doesn't have that loophole, because its reference is
+external and fixed.
 
-- **One color constancy method.** Only gray-world is implemented. White-patch,
-  Shades-of-Gray and learned estimators would make the comparison stronger.
-  `apply_color_constancy` raises `NotImplementedError` for anything else.
-- **Small dataset.** 4 objects on a controlled lab set; no natural scenes, no
-  cast shadows, no multi-illuminant cases.
-- **One segmentation algorithm.** SLIC only, at a single operating point of
-  200 segments and compactness 10. No sweep over superpixel count.
-- **Modest absolute boundary IoU.** Values near 0.33–0.35 mean roughly a third of
-  boundaries are shared with the reference. Color constancy improves this but
-  does not solve illumination invariance.
-- **The two experiments disagree.** Self-consistency favours color constancy
-  unanimously; the reflectance baseline does not. Any conclusion should cite both.
+Put the two together and the honest reading is this: **color constancy makes SLIC
+reliably more repeatable, but on this dataset it doesn't clearly move it closer to
+true illumination invariance.** Both things are worth knowing.
 
-## Reproducing
+## Where this falls short
 
-`python main.py` regenerates every CSV and figure in `results/`. SLIC is
-deterministic here, so the numbers match exactly rather than approximately:
+- **Only one color constancy method.** Gray-world and nothing else — `apply_color_constancy`
+  raises `NotImplementedError` for anything you throw at it. White-patch,
+  Shades-of-Gray or a learned estimator would make for a much stronger comparison.
+- **The dataset is small.** Four objects from a controlled lab setup. No natural
+  scenes, no cast shadows, no multi-illuminant cases.
+- **One algorithm, one operating point.** SLIC at 200 segments and compactness 10.
+  We didn't sweep superpixel count, and the conclusions might not survive it.
+- **The absolute numbers are modest.** Boundary IoU around 0.33–0.35 means only about
+  a third of boundaries are shared with the reference. Color constancy helps, but
+  illumination invariance is nowhere near solved here.
+- **The two experiments disagree.** Self-consistency backs color constancy
+  unanimously; the reflectance baseline doesn't. Any claim drawn from this should
+  cite both rather than picking the flattering one.
+
+## Reproducing this
+
+`python main.py` regenerates every CSV and figure under `results/`. SLIC is
+deterministic here, so you should get exact matches rather than approximate ones —
 `stability_summary_all_metrics.csv` reproduces to full float64 precision on
-Python 3.12 / scikit-image 0.26, and `reflectance_baseline_summary.csv` matches on
-11 of 16 values bit-exactly with the remaining 5 differing only in the last
-1–2 units in the last place, from floating-point summation order.
+Python 3.12 with scikit-image 0.26, and `reflectance_baseline_summary.csv` matches on
+11 of its 16 values bit-exactly, with the other 5 off only in the last unit or two
+in the last place from floating-point summation order.
 
-## Authors
+## Who did what
 
-**Salman Awaise** — superpixel pipelines, evaluation metrics, stability /
-boundary IoU / VI experiments
+**Salman Awaise** — superpixel pipelines, evaluation metrics, and the stability /
+boundary IoU / VI experiments  
 **Sameer Syed** — data loading and color constancy, SLIC segmentation and
 visualization, I/O utilities
 
-Developed for **CS 7180: Advanced Perception**, Northeastern University.
+Built for **CS 7180: Advanced Perception** at Northeastern University.
 
 ## References
 
