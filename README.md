@@ -311,8 +311,6 @@ boundary IoU / VI experiments
 **Sameer Syed** — data loading and color constancy, SLIC segmentation and
 visualization, I/O utilities
 
-Built for **CS 7180: Advanced Perception** at Northeastern University.
-
 ## References
 
 - Achanta et al. *SLIC Superpixels Compared to State-of-the-Art Superpixel Methods.* TPAMI 2012.
